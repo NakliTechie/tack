@@ -9,3 +9,7 @@ The public entry point is a *function*, not a REPL — so the future MCP
 """
 
 __version__ = "0.0.0"
+
+from tack.core import Config, TaskResult, run_task
+
+__all__ = ["Config", "TaskResult", "run_task", "__version__"]
