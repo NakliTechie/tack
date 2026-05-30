@@ -1,0 +1,32 @@
+[project]
+name = "tack"
+version = "0.0.0"
+description = "Portable coding-agent harness — an environment-agnostic plan→edit→verify→iterate→learn loop behind three adapter seams."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "NakliTechie" }]
+# Core aims for zero runtime dependencies (stdlib-first) so it drops into the
+# Alpine+Python Karkhana VM unchanged. Add deps only inside an adapter if forced.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tack"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

@@ -1,6 +1,16 @@
 # Local working notes — never committed
 plan/
 
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+
 # macOS
 .DS_Store
 .AppleDouble
