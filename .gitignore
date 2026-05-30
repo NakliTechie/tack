@@ -1,0 +1,17 @@
+# Local working notes — never committed
+plan/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Editor / OS junk
+*.swp
+*~
+.idea/
+.vscode/
+
+# Tack workspace state (when dogfooding inside this repo)
+.tack/
