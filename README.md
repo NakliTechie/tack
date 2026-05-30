@@ -24,7 +24,7 @@ Tack's own state lives in **`.tack/`** in the workspace.
 
 ## Roadmap
 
-- **v1.0** — Closed loop · native adapter · API brain (6-phase ReAct loop, 4 tools, context engine, verification, safety/economics)
+- **v1.0** — Closed loop · native adapter · API brain (6-phase ReAct loop, 4 tools, context engine, verification, safety/economics) — **built**
 - **v1.1** — Self-extension + local learning (agent writes its own CLIs to `.tack/bin/`)
 - **v1.2** — Frontier escalation + observability
 - **D1** — Karkhana deployment (the novel target)
@@ -40,4 +40,40 @@ This repo was scaffolded from a three-document handoff pack:
 
 ## Status
 
-Scaffolded — design pack locked, no code yet. Next is **v1.0**: define the three adapter seams, write the core against them, write the native adapter, and drive a failing test to green within an iteration cap.
+**v1.0 built (native adapter, harness mechanics proven).** The closed loop runs end to end on a real broken project — failing `pytest` → read → edit → the loop's own verification flips green — over a real filesystem, subprocess, and git, every step committed and undoable. The live-model run and the SWE-bench-lite baseline number (A11) are deferred until a `BYOK` key is wired; everything else is implemented and tested.
+
+```
+src/tack/
+├─ adapters/base.py     # the three seams (Protocols) — the only thing the core sees
+├─ adapters/native.py   # native adapter: HTTPS BYOK · in-proc control · subprocess+FS
+└─ core/
+   ├─ loop.py           # 6-phase ReAct; run_task() is the callable entry (not a REPL)
+   ├─ tools.py          # the 4 tools (read·write·edit·bash), ACI-disciplined feedback
+   ├─ context.py        # .tack/plan.md + AGENTS.md injection + progressive compaction
+   ├─ verify.py         # discover + run the project's check; exit code is the arbiter
+   └─ safety.py         # iteration cap · doom-loop · dangerous-cmd flag · git-per-step
+```
+
+### Quickstart
+
+```sh
+uv sync --extra dev          # dev env (CPython 3.11, pytest, ruff)
+uv run pytest                # the suite, incl. the closed-loop gate
+uv run python examples/demo_closed_loop.py   # watch the loop fix a bug (no API key needed)
+
+# against a real model (BYOK):
+OPENAI_API_KEY=sk-... uv run tack "make the failing test pass"
+```
+
+Or call it as a function — the agent face is a function, not a REPL, so the future MCP `ask_agent` surface is a thin wrapper:
+
+```python
+from tack import run_task, Config
+from tack.adapters.native import native_adapters
+
+res = run_task("fix the bug in calc.py",
+               native_adapters(workspace="."), workspace=".")
+print(res.success, res.stop_reason, res.turns)
+```
+
+Next is **v1.1** (self-extension + local learning) — best built once v1.0 is validated against a live model. See [the gate log](docs/v1.0-gate.md).
