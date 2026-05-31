@@ -9,6 +9,7 @@ The public surface is :func:`run_task`.
 
 from tack.core.learning import LearningStore, NullLearningStore
 from tack.core.loop import Config, TaskResult, parse_action, run_task
+from tack.core.trace import render_trace
 
 __all__ = [
     "Config",
@@ -16,5 +17,6 @@ __all__ = [
     "NullLearningStore",
     "TaskResult",
     "parse_action",
+    "render_trace",
     "run_task",
 ]

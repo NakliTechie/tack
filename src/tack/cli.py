@@ -14,15 +14,23 @@ from __future__ import annotations
 import argparse
 import sys
 
-from tack.adapters.native import FileLearningStore, native_adapters
+from tack.adapters.native import FileLearningStore, NativeLLM, native_adapters
 from tack.core.loop import Config, run_task
+from tack.core.trace import render_trace
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="tack", description="Portable coding-agent harness.")
     p.add_argument("task", help="the task to drive to passing checks")
     p.add_argument("--workspace", default=".", help="workspace directory (default: .)")
-    p.add_argument("--model", default="gpt-4o-mini", help="model id (default: gpt-4o-mini)")
+    p.add_argument(
+        "--model", default="gpt-4o-mini", help="cheap default model id (default: gpt-4o-mini)"
+    )
+    p.add_argument(
+        "--frontier-model",
+        default=None,
+        help="stronger model to escalate to when the cheap model gets stuck",
+    )
     p.add_argument(
         "--base-url", default="https://api.openai.com/v1", help="OpenAI-compatible base URL"
     )
@@ -61,17 +69,22 @@ def main(argv: list[str] | None = None) -> int:
         git_per_step=not args.no_git,
     )
     learning = None if args.no_learning else FileLearningStore()
+    frontier = (
+        NativeLLM(model=args.frontier_model, api_key=adapters.llm.api_key, base_url=args.base_url)
+        if args.frontier_model
+        else None
+    )
     res = run_task(
-        args.task, adapters, workspace=args.workspace, config=config, learning=learning
+        args.task,
+        adapters,
+        workspace=args.workspace,
+        config=config,
+        learning=learning,
+        frontier=frontier,
     )
 
-    for e in res.transcript:
-        action = e.get("action") or {}
-        tool = (action.get("tool") or "—").ljust(7)
-        print(f"  turn {e['turn']}: {tool}  ok={e.get('tool_ok')}  verify={e.get('verify_passed')}")
+    print(render_trace(res))
     print(f"\n[tack] {res.stop_reason} after {res.turns} turn(s) — success={res.success}")
-    if res.promoted_tools:
-        print(f"[tack] promoted self-written tools: {', '.join(res.promoted_tools)}")
     if res.summary:
         print(f"[tack] {res.summary}")
     return 0 if res.success else 1

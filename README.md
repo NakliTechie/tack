@@ -26,7 +26,7 @@ Tack's own state lives in **`.tack/`** in the workspace.
 
 - **v1.0** — Closed loop · native adapter · API brain (6-phase ReAct loop, 4 tools, context engine, verification, safety/economics) — **built**
 - **v1.1** — Self-extension + local learning (agent writes its own CLIs to `.tack/bin/`) — **built**
-- **v1.2** — Frontier escalation + observability
+- **v1.2** — Frontier escalation + observability (cheap-default → frontier-on-stuck; legible trace) — **built**
 - **D1** — Karkhana deployment (the novel target)
 - **v1.3** — Local brain (Ollama native; Transformers.js + WebGPU in Karkhana)
 
@@ -76,7 +76,7 @@ res = run_task("fix the bug in calc.py",
 print(res.success, res.stop_reason, res.turns)
 ```
 
-**v1.0** and **v1.1** are built and mechanics-proven — see the gate logs ([v1.0](docs/v1.0-gate.md), [v1.1](docs/v1.1-gate.md)). Next is **v1.2** (frontier escalation + observability). The live-model validation and the SWE-bench-lite baseline (A11) wait on a BYOK key.
+**v1.0, v1.1, and v1.2** are built and mechanics-proven — see the gate logs ([v1.0](docs/v1.0-gate.md), [v1.1](docs/v1.1-gate.md), [v1.2](docs/v1.2-gate.md)). Next is **D1** (the Karkhana browser-VM deployment — the novel target) or **v1.3** (local brain). The live-model validation and the SWE-bench-lite baseline (A11) wait on a BYOK key.
 
 ## License
 

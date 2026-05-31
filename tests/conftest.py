@@ -51,3 +51,23 @@ def scripted(tmp_path):
         )
 
     return _build
+
+
+@pytest.fixture
+def make_llm():
+    """Factory: replies -> a standalone ScriptedLLM (for cheap/frontier pairs)."""
+
+    def _make(replies):
+        return ScriptedLLM(replies)
+
+    return _make
+
+
+@pytest.fixture
+def make_adapters(tmp_path):
+    """Factory: an LLM -> Adapters bound to this test's tmp_path workspace."""
+
+    def _make(llm):
+        return Adapters(llm=llm, control=NativeControl(), execfs=NativeExecFS(str(tmp_path)))
+
+    return _make

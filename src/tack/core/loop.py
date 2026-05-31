@@ -15,7 +15,7 @@ import os
 import re
 from dataclasses import dataclass, field
 
-from tack.adapters.base import Adapters, Message
+from tack.adapters.base import Adapters, LLMTransport, Message
 from tack.core.context import Context, ContextConfig
 from tack.core.learning import LearningStore, NullLearningStore
 from tack.core.prompts import build_system_prompt
@@ -52,6 +52,9 @@ class Config:
     compact_threshold_tokens: int = 12000
     keep_recent_turns: int = 6
     model_opts: dict = field(default_factory=lambda: {"temperature": 0})
+    # v1.2 — frontier escalation (only active when a `frontier` transport is given)
+    escalate_on_doom: bool = True  # cheap model stuck → switch to frontier
+    escalate_without_ground_truth: bool = True  # no verify cmd → judgment task → frontier
 
 
 @dataclass
@@ -63,6 +66,8 @@ class TaskResult:
     summary: str | None = None
     final_head: str | None = None
     promoted_tools: list[str] = field(default_factory=list)
+    escalated: bool = False
+    escalation_turn: int | None = None
     transcript: list[dict] = field(default_factory=list)
 
 
@@ -73,19 +78,24 @@ def run_task(
     workspace: str = ".",
     config: Config | None = None,
     learning: LearningStore | None = None,
+    frontier: LLMTransport | None = None,
 ) -> TaskResult:
     """Drive ``task`` to a passing verification command, or stop and report why.
 
     Stop reasons: ``verified`` (success) · ``model_finished`` (no verify command
     available) · ``iteration_cap`` · ``doom_loop`` · ``cancelled``.
 
-    ``learning`` is an optional per-device :class:`LearningStore` (v1.1): its prior
-    knowledge is injected at session start, and successes / anti-patterns are
-    persisted to it. Defaults to a no-op store.
+    ``learning`` is an optional per-device :class:`LearningStore` (v1.1).
+
+    ``frontier`` is an optional stronger model (v1.2). The loop runs the cheap
+    ``adapters.llm`` by default and escalates to ``frontier`` when the cheap model
+    doom-loops, or starts on it when there's no ground truth to iterate against (a
+    judgment task). Cheap-by-default, frontier-on-escalation, ground-truth-as-
+    arbiter — the boundary is a visible feature (Vision §2).
     """
     config = config or Config()
     learning = learning or NullLearningStore()
-    llm, control, fs = adapters.llm, adapters.control, adapters.execfs
+    control, fs = adapters.control, adapters.execfs
 
     tools = Tools(fs, bash_timeout=config.bash_timeout)
     detector = DoomLoopDetector(config.doom_window)
@@ -98,16 +108,42 @@ def run_task(
     system_prompt = build_system_prompt(os.path.abspath(workspace), verify_cmd)
     ctx = Context(
         fs,
-        llm,
+        adapters.llm,
         system_prompt=system_prompt,
         config=ContextConfig(config.compact_threshold_tokens, config.keep_recent_turns),
     )
     prior_knowledge = learning.prior_knowledge().strip()
 
+    # active model: cheap by default; may switch to frontier (one-way).
+    active_llm: LLMTransport = adapters.llm
+    active_label = "cheap" if frontier is not None else "model"
+    escalated = False
+    escalation_turn: int | None = None
+    if (
+        frontier is not None
+        and verify_cmd is None
+        and config.escalate_without_ground_truth
+    ):
+        # no test to arbitrate → judgment task → cheap-model parity doesn't hold.
+        active_llm, active_label, escalated, escalation_turn = frontier, "frontier", True, 0
+
     history: list[Message] = [Message(role="user", content=f"Task: {task}")]
     transcript: list[dict] = []
     promoted_tools: list[str] = []
     turn = 0
+
+    def try_escalate(reason: str) -> bool:
+        """Switch to the frontier model once (one-way). Returns True if it did."""
+        nonlocal active_llm, active_label, escalated, escalation_turn, detector
+        if frontier is None or escalated or not config.escalate_on_doom:
+            return False
+        learning.record_anti_pattern(detector.reason(), f"cheap model on '{task[:60]}'")
+        active_llm, active_label, escalated, escalation_turn = frontier, "frontier", True, turn
+        detector = DoomLoopDetector(config.doom_window)  # fresh start on the better model
+        history.append(
+            Message(role="user", content=f"[escalated to the frontier model — {reason}]")
+        )
+        return True
 
     def learning_blocks() -> list[Message]:
         """Dynamic system blocks injected each turn: device prior-knowledge + the
@@ -138,6 +174,8 @@ def run_task(
             summary=summary,
             final_head=stepper.head() if config.git_per_step else None,
             promoted_tools=promoted_tools,
+            escalated=escalated,
+            escalation_turn=escalation_turn,
             transcript=transcript,
         )
 
@@ -152,10 +190,10 @@ def run_task(
 
         # PHASE 2 — think
         messages = ctx.system_messages(learning_blocks()) + history
-        reply = llm.complete(messages, **config.model_opts).content
+        reply = active_llm.complete(messages, **config.model_opts).content
         history.append(Message(role="assistant", content=reply))
         action = parse_action(reply)
-        entry: dict = {"turn": turn, "action": action}
+        entry: dict = {"turn": turn, "action": action, "model": active_label}
 
         # PHASE 3 — self-critique (programmatic, before executing anything)
         if action is None:
@@ -170,6 +208,8 @@ def run_task(
             entry["critique"] = "no-action"
             transcript.append(entry)
             if detector.is_doomed():
+                if try_escalate("the cheap model produced no actionable reply"):
+                    continue
                 learning.record_anti_pattern(detector.reason(), f"on '{task[:60]}'")
                 return done(False, "doom_loop")
             continue
@@ -227,6 +267,8 @@ def run_task(
                 return done(True, "verified")
         transcript.append(entry)
         if detector.is_doomed():
+            if try_escalate("the cheap model got stuck"):
+                continue
             learning.record_anti_pattern(detector.reason(), f"on '{task[:60]}'")
             return done(False, "doom_loop")
 
