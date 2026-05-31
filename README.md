@@ -77,3 +77,7 @@ print(res.success, res.stop_reason, res.turns)
 ```
 
 Next is **v1.1** (self-extension + local learning) — best built once v1.0 is validated against a live model. See [the gate log](docs/v1.0-gate.md).
+
+## License
+
+[MIT](LICENSE) — the field default (Pi-core, OpenCode, OpenHands, SWE-agent all MIT), clean to embrace-and-extend if Tack ever graduates.

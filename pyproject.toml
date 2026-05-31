@@ -4,6 +4,8 @@ version = "0.0.0"
 description = "Portable coding-agent harness — an environment-agnostic plan→edit→verify→iterate→learn loop behind three adapter seams."
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "NakliTechie" }]
 # Core aims for zero runtime dependencies (stdlib-first) so it drops into the
 # Alpine+Python Karkhana VM unchanged. Add deps only inside an adapter if forced.
