@@ -16,6 +16,7 @@ dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
 tack = "tack.cli:main"
+tack-bench = "tack.bench:main"
 
 [build-system]
 requires = ["hatchling"]
