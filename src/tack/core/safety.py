@@ -69,6 +69,15 @@ class DoomLoopDetector:
         errs = [e for e in self._errors if e]
         return len(errs) == self.window and len(set(errs)) == 1  # same error N times
 
+    def reason(self) -> str:
+        """A short signature of why it stalled — recorded as an anti-pattern."""
+        if self._actions and len(set(self._actions)) == 1:
+            return f"repeated action: {self._actions[-1]}"
+        errs = [e for e in self._errors if e]
+        if errs:
+            return f"repeated error: {errs[-1][:120]}"
+        return "stalled"
+
 
 class GitStepper:
     """Per-step git snapshots over the exec seam. Real git in every adapter;

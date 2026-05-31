@@ -17,8 +17,10 @@ from dataclasses import dataclass, field
 
 from tack.adapters.base import Adapters, Message
 from tack.core.context import Context, ContextConfig
+from tack.core.learning import LearningStore, NullLearningStore
 from tack.core.prompts import build_system_prompt
 from tack.core.safety import DoomLoopDetector, GitStepper, is_dangerous
+from tack.core.selfext import ToolRegistry
 from tack.core.tools import Tools
 from tack.core.verify import discover_verify_command, run_verification
 
@@ -60,6 +62,7 @@ class TaskResult:
     verify_command: str | None
     summary: str | None = None
     final_head: str | None = None
+    promoted_tools: list[str] = field(default_factory=list)
     transcript: list[dict] = field(default_factory=list)
 
 
@@ -69,17 +72,24 @@ def run_task(
     *,
     workspace: str = ".",
     config: Config | None = None,
+    learning: LearningStore | None = None,
 ) -> TaskResult:
     """Drive ``task`` to a passing verification command, or stop and report why.
 
     Stop reasons: ``verified`` (success) · ``model_finished`` (no verify command
     available) · ``iteration_cap`` · ``doom_loop`` · ``cancelled``.
+
+    ``learning`` is an optional per-device :class:`LearningStore` (v1.1): its prior
+    knowledge is injected at session start, and successes / anti-patterns are
+    persisted to it. Defaults to a no-op store.
     """
     config = config or Config()
+    learning = learning or NullLearningStore()
     llm, control, fs = adapters.llm, adapters.control, adapters.execfs
 
     tools = Tools(fs, bash_timeout=config.bash_timeout)
     detector = DoomLoopDetector(config.doom_window)
+    registry = ToolRegistry(fs)
     stepper = GitStepper(fs)
     if config.git_per_step:
         stepper.ensure_repo()
@@ -92,10 +102,32 @@ def run_task(
         system_prompt=system_prompt,
         config=ContextConfig(config.compact_threshold_tokens, config.keep_recent_turns),
     )
+    prior_knowledge = learning.prior_knowledge().strip()
 
     history: list[Message] = [Message(role="user", content=f"Task: {task}")]
     transcript: list[dict] = []
+    promoted_tools: list[str] = []
     turn = 0
+
+    def learning_blocks() -> list[Message]:
+        """Dynamic system blocks injected each turn: device prior-knowledge + the
+        live self-written-tool registry."""
+        blocks: list[Message] = []
+        if prior_knowledge:
+            blocks.append(Message(role="system", content=prior_knowledge))
+        registry_summary = registry.summary()
+        if registry_summary:
+            blocks.append(Message(role="system", content=registry_summary))
+        return blocks
+
+    def on_green() -> None:
+        """Ground truth reached: promote provisional tools that were used, and
+        record a breadcrumb in the device playbook."""
+        promoted_tools.extend(registry.promote_used())
+        note = f"reached green on '{task[:60]}'" + (f" via {verify_cmd}" if verify_cmd else "")
+        if promoted_tools:
+            note += f"; promoted tools: {', '.join(promoted_tools)}"
+        learning.record_success(note)
 
     def done(success: bool, reason: str, summary: str | None = None) -> TaskResult:
         return TaskResult(
@@ -105,6 +137,7 @@ def run_task(
             verify_command=verify_cmd,
             summary=summary,
             final_head=stepper.head() if config.git_per_step else None,
+            promoted_tools=promoted_tools,
             transcript=transcript,
         )
 
@@ -118,7 +151,8 @@ def run_task(
         history = ctx.maybe_compact(history)
 
         # PHASE 2 — think
-        reply = llm.complete(ctx.system_messages() + history, **config.model_opts).content
+        messages = ctx.system_messages(learning_blocks()) + history
+        reply = llm.complete(messages, **config.model_opts).content
         history.append(Message(role="assistant", content=reply))
         action = parse_action(reply)
         entry: dict = {"turn": turn, "action": action}
@@ -136,6 +170,7 @@ def run_task(
             entry["critique"] = "no-action"
             transcript.append(entry)
             if detector.is_doomed():
+                learning.record_anti_pattern(detector.reason(), f"on '{task[:60]}'")
                 return done(False, "doom_loop")
             continue
 
@@ -147,6 +182,7 @@ def run_task(
                 entry["verify_passed"] = outcome.passed
                 transcript.append(entry)
                 if outcome.passed:
+                    on_green()
                     return done(True, "verified", summary)
                 history.append(Message(role="user", content=f"Not done yet — {outcome.feedback}"))
                 continue
@@ -172,8 +208,13 @@ def run_task(
         history.append(Message(role="user", content=f"[tool:{tool}]\n{tr.feedback}"))
         detector.record(tr.signature, tr.ok, tr.feedback)
         entry["tool_ok"] = tr.ok
+        if tool == "bash":
+            registry.note_uses(action.get("cmd", ""))
 
         # PHASE 6 — post-process
+        new_tools = registry.scan(turn)  # self-extension: pick up tools just written
+        if new_tools:
+            entry["new_tools"] = new_tools
         if config.git_per_step:
             entry["head"] = stepper.commit(f"tack turn {turn}: {tool}")
         if config.verify_each_turn and verify_cmd:
@@ -181,10 +222,12 @@ def run_task(
             history.append(Message(role="user", content=outcome.feedback))
             entry["verify_passed"] = outcome.passed
             if outcome.passed:
+                on_green()
                 transcript.append(entry)
                 return done(True, "verified")
         transcript.append(entry)
         if detector.is_doomed():
+            learning.record_anti_pattern(detector.reason(), f"on '{task[:60]}'")
             return done(False, "doom_loop")
 
     return done(False, "iteration_cap")

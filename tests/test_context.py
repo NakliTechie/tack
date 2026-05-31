@@ -33,6 +33,21 @@ def test_plan_read_write(tmp_path):
     assert "step one" in ctx.read_plan()
 
 
+def test_system_messages_inject_workspace_playbook(tmp_path):
+    fs = NativeExecFS(str(tmp_path))
+    fs.write(".tack/playbook.md", "always run pytest -q first")
+    ctx = Context(fs, _StubLLM(), system_prompt="S")
+    blob = " ".join(m["content"] for m in ctx.system_messages())
+    assert "always run pytest -q first" in blob
+
+
+def test_system_messages_append_extra_blocks(tmp_path):
+    ctx = Context(NativeExecFS(str(tmp_path)), _StubLLM(), system_prompt="S")
+    extra = [Message(role="system", content="DYNAMIC LEARNING BLOCK")]
+    blob = " ".join(m["content"] for m in ctx.system_messages(extra))
+    assert "DYNAMIC LEARNING BLOCK" in blob
+
+
 def test_no_compaction_under_threshold(tmp_path):
     ctx = Context(
         NativeExecFS(str(tmp_path)),

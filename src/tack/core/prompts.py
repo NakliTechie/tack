@@ -35,6 +35,12 @@ When the verification command passes, finish:
 {{"tool":"finish","summary":"what you changed and why it passes"}}
 ```
 
+You can extend yourself: when a step is worth repeating, `write` a small shell
+script to `.tack/bin/`, make it executable (`bash` → `chmod +x .tack/bin/NAME`),
+and call it like any command. A tool you just wrote is PROVISIONAL — check its
+output against ground truth before you rely on it; it becomes trusted once it has
+been part of a green run. Don't add new built-in tools; bash + your own scripts cover it.
+
 Rules:
 - One action per turn. Read a file before you edit it.
 - `edit`'s `old` must match exactly once — include surrounding context if needed.

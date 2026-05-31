@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from tack.adapters.native import native_adapters
+from tack.adapters.native import FileLearningStore, native_adapters
 from tack.core.loop import Config, run_task
 
 
@@ -34,6 +34,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="block destructive shell commands (OFF by default — sandbox-trust)",
     )
     p.add_argument("--no-git", action="store_true", help="disable git-per-step snapshots")
+    p.add_argument(
+        "--no-learning",
+        action="store_true",
+        help="disable the per-device learning store (~/.tack or $TACK_HOME)",
+    )
     return p
 
 
@@ -55,13 +60,18 @@ def main(argv: list[str] | None = None) -> int:
         dangerous_command_flag=args.dangerous_command_guard,
         git_per_step=not args.no_git,
     )
-    res = run_task(args.task, adapters, workspace=args.workspace, config=config)
+    learning = None if args.no_learning else FileLearningStore()
+    res = run_task(
+        args.task, adapters, workspace=args.workspace, config=config, learning=learning
+    )
 
     for e in res.transcript:
         action = e.get("action") or {}
         tool = (action.get("tool") or "—").ljust(7)
         print(f"  turn {e['turn']}: {tool}  ok={e.get('tool_ok')}  verify={e.get('verify_passed')}")
     print(f"\n[tack] {res.stop_reason} after {res.turns} turn(s) — success={res.success}")
+    if res.promoted_tools:
+        print(f"[tack] promoted self-written tools: {', '.join(res.promoted_tools)}")
     if res.summary:
         print(f"[tack] {res.summary}")
     return 0 if res.success else 1

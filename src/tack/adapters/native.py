@@ -50,6 +50,13 @@ class NativeExecFS:
         return full
 
     def run(self, cmd: str, *, timeout: float | None = None) -> ExecResult:
+        # Never let stale Python bytecode mask a source edit. The loop edits a
+        # file and re-runs the check, often within the same second; CPython's
+        # .pyc invalidation uses second-resolution mtime, so a same-second edit
+        # can be ignored and the agent would doom-loop on already-fixed code.
+        # Writing no bytecode removes the trap (a real "edit, re-test, trust the
+        # exit code" harness must not be fooled by a cache).
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
         try:
             p = subprocess.run(
                 cmd,
@@ -58,6 +65,7 @@ class NativeExecFS:
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                env=env,
             )
             return ExecResult(stdout=p.stdout, stderr=p.stderr, exit_code=p.returncode)
         except subprocess.TimeoutExpired as e:
@@ -207,6 +215,58 @@ class NativeLLM:
             )
         except (KeyError, IndexError, TypeError) as e:
             raise TransportError(f"malformed LLM response: {str(data)[:500]}") from e
+
+
+# ==========================================================================
+# Per-device learning store (native; v1.1)
+# ==========================================================================
+class FileLearningStore:
+    """System-level learning under ``~/.tack`` (or ``$TACK_HOME``).
+
+    Native-only: it reaches the host home directly, not through the
+    workspace-scoped ExecFS seam (the workspace can't see the device store). The
+    Karkhana adapter will supply its own store rooted at the VM's persistent home
+    at D1. Plain append-only Markdown — no server, no telemetry (Vision §4.4).
+    """
+
+    def __init__(self, root: str | None = None):
+        base = root or os.environ.get("TACK_HOME") or os.path.join(os.path.expanduser("~"), ".tack")
+        self.root = base
+        self.playbook = os.path.join(base, "playbook.md")
+        self.anti = os.path.join(base, "anti-patterns.md")
+
+    def _read(self, path: str) -> str:
+        try:
+            with open(path, encoding="utf-8") as f:
+                return f.read()
+        except FileNotFoundError:
+            return ""
+
+    def _append(self, path: str, line: str) -> None:
+        existing = self._read(path)
+        if line.strip() and line.strip() in existing:
+            return  # dedup
+        os.makedirs(self.root, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            if existing and not existing.endswith("\n"):
+                f.write("\n")
+            f.write(line.rstrip() + "\n")
+
+    def prior_knowledge(self) -> str:
+        parts = []
+        playbook = self._read(self.playbook).strip()
+        anti = self._read(self.anti).strip()
+        if playbook:
+            parts.append("# Device playbook — moves that have worked before\n" + playbook)
+        if anti:
+            parts.append("# Known anti-patterns — avoid these\n" + anti)
+        return "\n\n".join(parts)
+
+    def record_success(self, note: str) -> None:
+        self._append(self.playbook, f"- {note}")
+
+    def record_anti_pattern(self, signature: str, note: str) -> None:
+        self._append(self.anti, f"- {signature} — {note}")
 
 
 # ==========================================================================

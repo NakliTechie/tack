@@ -75,6 +75,18 @@ def test_execfs_timeout_returns_124(tmp_path):
     assert "timed out" in r.stderr
 
 
+def test_run_never_uses_stale_bytecode(tmp_path):
+    """Regression: an edit + re-run within the same second must reflect the new
+    source. Without PYTHONDONTWRITEBYTECODE a stale .pyc (second-resolution mtime)
+    can mask the change — and the loop would doom-loop on already-fixed code."""
+    fs = NativeExecFS(str(tmp_path))
+    fs.write("m.py", "def v():\n    return 1\n")
+    fs.write("run.py", "import m; print(m.v())")
+    assert fs.run("python3 run.py").stdout.strip() == "1"
+    fs.edit("m.py", "return 1", "return 2")  # same-second edit
+    assert fs.run("python3 run.py").stdout.strip() == "2"
+
+
 # --- Control --------------------------------------------------------------
 def test_control_conforms_and_roundtrips():
     c = NativeControl()

@@ -20,6 +20,7 @@ from tack.core.util import estimate_tokens, truncate
 from tack.errors import TackError
 
 PLAN_FILE = ".tack/plan.md"
+PLAYBOOK_FILE = ".tack/playbook.md"
 AGENTS_FILE = "AGENTS.md"
 
 
@@ -61,19 +62,35 @@ class Context:
     def read_conventions(self) -> str:
         return self._read_or_empty(AGENTS_FILE)
 
+    def read_playbook(self) -> str:
+        """User-level (per-workspace) playbook — moves that worked for this repo."""
+        return self._read_or_empty(PLAYBOOK_FILE)
+
     # -- message assembly --------------------------------------------------
-    def system_messages(self) -> list[Message]:
+    def system_messages(self, extra: list[Message] | None = None) -> list[Message]:
         """The persistent head of every request: harness prompt + conventions +
-        the current plan. Rebuilt each turn so plan/convention edits take effect."""
+        plan + workspace playbook + any dynamic learning blocks the loop supplies
+        (device prior-knowledge, the self-written-tool registry). Rebuilt each turn
+        so edits to any of these take effect."""
         msgs: list[Message] = [Message(role="system", content=self.system_prompt)]
         conventions = self.read_conventions().strip()
         if conventions:
             msgs.append(
                 Message(role="system", content=f"# Project conventions (AGENTS.md)\n{conventions}")
             )
+        playbook = self.read_playbook().strip()
+        if playbook:
+            msgs.append(
+                Message(
+                    role="system",
+                    content=f"# Workspace playbook (.tack/playbook.md)\n{playbook}",
+                )
+            )
         plan = self.read_plan().strip()
         if plan:
             msgs.append(Message(role="system", content=f"# Current plan (.tack/plan.md)\n{plan}"))
+        if extra:
+            msgs.extend(extra)
         return msgs
 
     # -- progressive compaction -------------------------------------------

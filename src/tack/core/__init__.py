@@ -7,6 +7,14 @@ safety/economics live here. Everything in this package depends only on
 The public surface is :func:`run_task`.
 """
 
+from tack.core.learning import LearningStore, NullLearningStore
 from tack.core.loop import Config, TaskResult, parse_action, run_task
 
-__all__ = ["Config", "TaskResult", "parse_action", "run_task"]
+__all__ = [
+    "Config",
+    "LearningStore",
+    "NullLearningStore",
+    "TaskResult",
+    "parse_action",
+    "run_task",
+]
