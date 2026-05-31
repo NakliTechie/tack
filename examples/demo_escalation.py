@@ -42,7 +42,7 @@ def main() -> None:
     pathlib.Path(work, "calc.py").write_text(BUGGY)
     pathlib.Path(work, "test_calc.py").write_text(TEST)
 
-    cheap = ScriptedBrain([act("edit", path="calc.py", old="NONEXISTENT", new="x")])  # keeps failing
+    cheap = ScriptedBrain([act("edit", path="calc.py", old="NONEXISTENT", new="x")])  # fails always
     frontier = ScriptedBrain([act("edit", path="calc.py", old="return a - b", new="return a + b")])
     adapters = Adapters(llm=cheap, control=NativeControl(), execfs=NativeExecFS(work))
 
