@@ -7,6 +7,9 @@ Nothing here is load-bearing; the loop is fully usable without it.
     tack "make the failing test pass"
     tack --workspace ../repo --model gpt-4o-mini "fix the parser bug"
     OPENAI_API_KEY=sk-... tack --max-iterations 40 "implement the TODO in api.py"
+
+    tack build specs/                     # multi-phase build from spec docs
+    tack build specs/ --resume            # resume from checkpoint
 """
 
 from __future__ import annotations
@@ -19,9 +22,7 @@ from tack.core.loop import Config, run_task
 from tack.core.trace import render_trace
 
 
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="tack", description="Portable coding-agent harness.")
-    p.add_argument("task", help="the task to drive to passing checks")
+def _shared_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--workspace", default=".", help="workspace directory (default: .)")
     p.add_argument(
         "--model", default="gpt-4o-mini", help="cheap default model id (default: gpt-4o-mini)"
@@ -34,7 +35,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--base-url", default="https://api.openai.com/v1", help="OpenAI-compatible base URL"
     )
-    p.add_argument("--verify", default=None, help="explicit verification command (else discovered)")
     p.add_argument("--max-iterations", type=int, default=25, help="hard turn ceiling (default: 25)")
     p.add_argument(
         "--dangerous-command-guard",
@@ -47,23 +47,39 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="disable the per-device learning store (~/.tack or $TACK_HOME)",
     )
+
+
+def _build_task_parser() -> argparse.ArgumentParser:
+    """Parser for ``tack "task"`` (legacy single-task mode)."""
+    p = argparse.ArgumentParser(prog="tack", description="Portable coding-agent harness.")
+    p.add_argument("task", help="the task to drive to passing checks")
+    _shared_args(p)
     return p
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+def _build_build_parser() -> argparse.ArgumentParser:
+    """Parser for ``tack build <spec-dir>``."""
+    p = argparse.ArgumentParser(
+        prog="tack build",
+        description="Multi-phase build from spec documents",
+    )
+    p.add_argument("spec_dir", help="directory containing .md specification documents")
+    p.add_argument("--resume", action="store_true", help="resume from last checkpoint")
+    p.add_argument("--verify", default=None, help="default verify command for phases")
+    _shared_args(p)
+    return p
+
+
+def _run_task_cmd(args: argparse.Namespace) -> int:
     adapters = native_adapters(
         workspace=args.workspace, model=args.model, base_url=args.base_url
     )
     if adapters.llm.api_key is None:
-        print(
-            "error: no API key found. Set OPENAI_API_KEY (or TACK_API_KEY).",
-            file=sys.stderr,
-        )
+        print("error: no API key found. Set OPENAI_API_KEY (or TACK_API_KEY).", file=sys.stderr)
         return 2
 
     config = Config(
-        verify_command=args.verify,
+        verify_command=getattr(args, "verify", None),
         max_iterations=args.max_iterations,
         dangerous_command_flag=args.dangerous_command_guard,
         git_per_step=not args.no_git,
@@ -88,6 +104,45 @@ def main(argv: list[str] | None = None) -> int:
     if res.summary:
         print(f"[tack] {res.summary}")
     return 0 if res.success else 1
+
+
+def _run_build_cmd(argv: list[str]) -> int:
+    from tack.director import build_from_specs
+
+    args = _build_build_parser().parse_args(argv)
+    adapters = native_adapters(
+        workspace=args.workspace, model=args.model, base_url=args.base_url
+    )
+    if adapters.llm.api_key is None:
+        print("error: no API key found. Set OPENAI_API_KEY (or TACK_API_KEY).", file=sys.stderr)
+        return 2
+
+    results = build_from_specs(
+        args.spec_dir,
+        adapters,
+        workspace=args.workspace,
+        config=Config(
+            verify_command=args.verify,
+            max_iterations=args.max_iterations,
+            dangerous_command_flag=args.dangerous_command_guard,
+            git_per_step=not args.no_git,
+        ),
+        resume=args.resume,
+        frontier=(
+            NativeLLM(model=args.frontier_model, api_key=adapters.llm.api_key, base_url=args.base_url)
+            if args.frontier_model
+            else None
+        ),
+    )
+
+    succeeded = sum(1 for r in results if r.status == "completed")
+    return 0 if succeeded == len(results) else 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    if argv and len(argv) >= 1 and argv[0] == "build":
+        return _run_build_cmd(argv[1:])
+    return _run_task_cmd(_build_task_parser().parse_args(argv))
 
 
 if __name__ == "__main__":

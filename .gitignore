@@ -22,6 +22,7 @@ build/
 *~
 .idea/
 .vscode/
+.opencode/
 
 # Tack workspace state (when dogfooding inside this repo)
 .tack/
