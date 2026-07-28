@@ -35,6 +35,12 @@ def _shared_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--base-url", default="https://api.openai.com/v1", help="OpenAI-compatible base URL"
     )
+    p.add_argument(
+        "--verify",
+        default=None,
+        help="explicit verification command (else discovered); under `build`, the "
+        "default for phases that don't set their own",
+    )
     p.add_argument("--max-iterations", type=int, default=25, help="hard turn ceiling (default: 25)")
     p.add_argument(
         "--dangerous-command-guard",
@@ -57,6 +63,12 @@ def _build_task_parser() -> argparse.ArgumentParser:
     return p
 
 
+# Public name for the single-task parser, kept for external callers that
+# imported it before the ``build`` subcommand split the parsers in two.
+# (Not to be confused with _build_build_parser, which serves `tack build`.)
+build_parser = _build_task_parser
+
+
 def _build_build_parser() -> argparse.ArgumentParser:
     """Parser for ``tack build <spec-dir>``."""
     p = argparse.ArgumentParser(
@@ -65,7 +77,8 @@ def _build_build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("spec_dir", help="directory containing .md specification documents")
     p.add_argument("--resume", action="store_true", help="resume from last checkpoint")
-    p.add_argument("--verify", default=None, help="default verify command for phases")
+    # --verify comes from _shared_args (declaring it here too is an argparse conflict);
+    # for `build` it acts as the default verify command for every phase.
     _shared_args(p)
     return p
 
@@ -79,7 +92,7 @@ def _run_task_cmd(args: argparse.Namespace) -> int:
         return 2
 
     config = Config(
-        verify_command=getattr(args, "verify", None),
+        verify_command=args.verify,
         max_iterations=args.max_iterations,
         dangerous_command_flag=args.dangerous_command_guard,
         git_per_step=not args.no_git,
@@ -129,7 +142,11 @@ def _run_build_cmd(argv: list[str]) -> int:
         ),
         resume=args.resume,
         frontier=(
-            NativeLLM(model=args.frontier_model, api_key=adapters.llm.api_key, base_url=args.base_url)
+            NativeLLM(
+                model=args.frontier_model,
+                api_key=adapters.llm.api_key,
+                base_url=args.base_url,
+            )
             if args.frontier_model
             else None
         ),
@@ -140,7 +157,15 @@ def _run_build_cmd(argv: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    if argv and len(argv) >= 1 and argv[0] == "build":
+    # Resolve argv *before* the subcommand check: the console-script entry calls
+    # main() with no arguments, so leaving argv as None here sends `tack build ...`
+    # to the single-task parser — which errors on the spec dir it doesn't know
+    # about, making the whole `build` subcommand unreachable from a real shell.
+    # Consequence: a single task whose text is literally "build" now has to be
+    # run through the library entry, not the CLI.
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv and argv[0] == "build":
         return _run_build_cmd(argv[1:])
     return _run_task_cmd(_build_task_parser().parse_args(argv))
 

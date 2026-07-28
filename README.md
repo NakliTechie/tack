@@ -30,6 +30,10 @@ Tack's own state lives in **`.tack/`** in the workspace.
 - **D1** — Karkhana deployment (the novel target)
 - **v1.3** — Local brain (Ollama native; Transformers.js + WebGPU in Karkhana)
 
+### Exploratory — not a milestone
+
+- **`director`** (`tack build specs/`) — an outer loop that decomposes spec documents into a phased build plan and drives each phase to green, with checkpoint/resume. Written 2026-06-12, committed 2026-07-28. It is **not** on the roadmap above and has **not** passed a gate. It picks its execution backend by auto-detection — an [Aider](https://github.com/Aider-AI/aider) subprocess when `aider` is on `PATH`, Tack's own `run_task` loop otherwise — which makes the engine behind `tack build` machine-dependent, leaves the default path untested, and puts the API key on the Aider argv handed to `execfs.run`, i.e. **into the VM** under the Karkhana adapter, against a locked invariant. Treat it as a spike pending a decision, not a feature. See **[docs/director-notes.md](docs/director-notes.md)**.
+
 ## Handoff documents
 
 This repo was scaffolded from a three-document handoff pack:

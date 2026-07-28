@@ -16,7 +16,6 @@ from tack.adapters.native import NativeControl, NativeExecFS
 from tack.core.loop import Config
 from tack.director import (
     DirectorState,
-    PhaseResult,
     _check_aider_available,
     _ready_phases,
     _resolve_backend,
@@ -272,14 +271,26 @@ def test_state_load_corrupt(tmp_path: pathlib.Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_check_aider_available() -> None:
-    """Aider is installed on the dev box — should be findable on PATH."""
+def test_check_aider_available(monkeypatch) -> None:
+    """PATH lookup, both ways — must not depend on what the dev box has installed."""
+    monkeypatch.setattr("tack.director.shutil.which", lambda name: "/usr/local/bin/aider")
     assert _check_aider_available() is True
 
+    monkeypatch.setattr("tack.director.shutil.which", lambda name: None)
+    assert _check_aider_available() is False
 
-def test_resolve_backend_auto_prefers_aider() -> None:
+
+def test_resolve_backend_auto_prefers_aider(monkeypatch) -> None:
+    monkeypatch.setattr("tack.director._check_aider_available", lambda: True)
     assert _resolve_backend(None) == "aider"
     assert _resolve_backend("auto") == "aider"
+
+
+def test_resolve_backend_auto_falls_back_to_tack(monkeypatch) -> None:
+    """The branch that keeps the suite portable when aider isn't installed."""
+    monkeypatch.setattr("tack.director._check_aider_available", lambda: False)
+    assert _resolve_backend(None) == "tack"
+    assert _resolve_backend("auto") == "tack"
 
 
 def test_resolve_backend_tack() -> None:
