@@ -32,7 +32,7 @@ Tack's own state lives in **`.tack/`** in the workspace.
 
 ### Exploratory — not a milestone
 
-- **`director`** (`tack build specs/`) — an outer loop that decomposes spec documents into a phased build plan and drives each phase to green, with checkpoint/resume. Written 2026-06-12, committed 2026-07-28. It is **not** on the roadmap above and has **not** passed a gate. It picks its execution backend by auto-detection — an [Aider](https://github.com/Aider-AI/aider) subprocess when `aider` is on `PATH`, Tack's own `run_task` loop otherwise — which makes the engine behind `tack build` machine-dependent, leaves the default path untested, and puts the API key on the Aider argv handed to `execfs.run`, i.e. **into the VM** under the Karkhana adapter, against a locked invariant. Treat it as a spike pending a decision, not a feature. See **[docs/director-notes.md](docs/director-notes.md)**.
+- **`director`** (`tack build specs/`) — an outer loop that decomposes spec documents into a phased build plan and drives each phase to green through Tack's own `run_task` loop, with checkpoint/resume. Written 2026-06-12, committed 2026-07-28. It is **not** on the roadmap above and has **not** passed a gate: it has never been run against a live model. (An earlier Aider-subprocess backend — machine-dependent, and it would have leaked the API key into the VM under the Karkhana adapter — was deleted 2026-07-28, leaving one execution path.) Treat it as a spike pending its gate run, not a feature. See **[docs/director-notes.md](docs/director-notes.md)**.
 
 ## Handoff documents
 
