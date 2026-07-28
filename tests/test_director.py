@@ -16,7 +16,6 @@ from tack.adapters.native import NativeControl, NativeExecFS
 from tack.core.loop import Config
 from tack.director import (
     DirectorState,
-    PhaseResult,
     _check_aider_available,
     _ready_phases,
     _resolve_backend,

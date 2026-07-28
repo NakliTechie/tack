@@ -142,7 +142,11 @@ def _run_build_cmd(argv: list[str]) -> int:
         ),
         resume=args.resume,
         frontier=(
-            NativeLLM(model=args.frontier_model, api_key=adapters.llm.api_key, base_url=args.base_url)
+            NativeLLM(
+                model=args.frontier_model,
+                api_key=adapters.llm.api_key,
+                base_url=args.base_url,
+            )
             if args.frontier_model
             else None
         ),

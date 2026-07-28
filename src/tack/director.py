@@ -31,9 +31,8 @@ import re
 import shlex
 import shutil
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Literal
 
 from tack.adapters.base import Adapters, ExecFS, LLMTransport, Message
 from tack.core.loop import Config, TaskResult, run_task
@@ -523,9 +522,14 @@ def build_from_specs(
     resolved_backend = _resolve_backend(backend)
     print(f"[director] backend: {resolved_backend}")
     if resolved_backend == "aider":
-        print(f"[director]   aider args: {'architect' if aider_architect else 'direct'}"
-              f"{', model=' + aider_model if aider_model else ''}"
-              f", retries={config.max_iterations if config.max_iterations < 100 else AIDER_DEFAULT_RETRIES}")
+        retries = (
+            config.max_iterations if config.max_iterations < 100 else AIDER_DEFAULT_RETRIES
+        )
+        print(
+            f"[director]   aider args: {'architect' if aider_architect else 'direct'}"
+            f"{', model=' + aider_model if aider_model else ''}"
+            f", retries={retries}"
+        )
 
     # ------------------------------------------------------------------
     # Load or build the build plan
@@ -692,7 +696,7 @@ def build_from_specs(
             if r.status in ("failed", "error")
             else "—"
         )
-        label = f" (aider)" if r.backend == "aider" else ""
+        label = " (aider)" if r.backend == "aider" else ""
         print(f"  {icon} {r.phase_id} {r.title}: {r.status}{label} ({r.turns}t)")
         if r.error:
             print(f"       error: {r.error[:120]}")
