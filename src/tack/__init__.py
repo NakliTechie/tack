@@ -7,10 +7,12 @@ deployed *unchanged* to constrained targets (the Karkhana browser-VM at D1).
 The public entry point is a *function*, not a REPL — so the future MCP
 ``ask_agent`` surface (external agents firing tasks at Tack) is cheap to add.
 
-The :func:`tack.director.build_from_specs` function wraps the core loop in a
-higher-order orchestrator that decomposes spec documents into a multi-phase
-build plan, executes phases through :func:`run_task`, checkpoints progress,
-and reports results — the "give it two docs and it builds" experience.
+:func:`tack.director.build_from_specs` is an *exploratory* orchestrator above
+the core (not a milestone — see ``docs/director-notes.md``): it decomposes spec
+documents into a multi-phase build plan, executes each phase, checkpoints
+progress, and reports results. Note that it executes phases through
+:func:`run_task` only when ``backend="tack"``; the default resolves by
+auto-detection and prefers an Aider subprocess when ``aider`` is on ``PATH``.
 """
 
 __version__ = "0.0.0"
