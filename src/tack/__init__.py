@@ -9,10 +9,8 @@ The public entry point is a *function*, not a REPL — so the future MCP
 
 :func:`tack.director.build_from_specs` is an *exploratory* orchestrator above
 the core (not a milestone — see ``docs/director-notes.md``): it decomposes spec
-documents into a multi-phase build plan, executes each phase, checkpoints
-progress, and reports results. Note that it executes phases through
-:func:`run_task` only when ``backend="tack"``; the default resolves by
-auto-detection and prefers an Aider subprocess when ``aider`` is on ``PATH``.
+documents into a multi-phase build plan, executes each phase through
+:func:`run_task`, checkpoints progress, and reports results.
 """
 
 __version__ = "0.0.0"

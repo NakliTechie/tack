@@ -142,7 +142,6 @@ def main() -> None:
         adapters,
         workspace=work,
         config=Config(max_iterations=8),
-        backend="tack",  # scripted brain — no real API key
     )
 
     print(f"\nFinal project state:")
