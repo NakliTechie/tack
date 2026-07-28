@@ -1,14 +1,13 @@
-"""Director loop — multi-phase orchestration with pluggable coding backends.
+"""Director loop — multi-phase orchestration over Tack's own loop.
 
 The director is the outer loop that makes "give it spec docs and it builds" work.
 It decomposes specification documents into a phased build plan, executes each
-phase through either an **Aider subprocess** (:ref:`backend="aider", default) or
-Tack's own :func:`run_task` loop (``backend="tack"``), checkpoints progress, and
-reports results. Lives *outside* the core.
+phase through Tack's own :func:`run_task` loop, checkpoints progress, and reports
+results. Lives *outside* the core.
 
 Usage (CLI)::
 
-    uv run tack build specs/              # fresh build (uses Aider by default)
+    uv run tack build specs/              # fresh build
     uv run tack build specs/ --resume     # resume from checkpoint
 
 Usage (Python)::
@@ -28,20 +27,14 @@ from __future__ import annotations
 import json
 import os
 import re
-import shlex
-import shutil
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from tack.adapters.base import Adapters, ExecFS, LLMTransport, Message
+from tack.adapters.base import Adapters, LLMTransport, Message
 from tack.core.loop import Config, TaskResult, run_task
 
 DIRECTOR_STATE = ".tack/director-state.json"
-
-# Aider retries per phase (maps to config.max_iterations when available).
-AIDER_DEFAULT_RETRIES = 3
-AIDER_DEFAULT_TIMEOUT = 600.0  # 10 min per aider invocation
 
 
 # ---------------------------------------------------------------------------
@@ -57,7 +50,6 @@ class PhaseResult:
     title: str
     task: str
     status: str  # completed | failed | skipped | error
-    backend: str = ""  # "aider" | "tack" — which engine ran this phase
     turns: int = 0
     success: bool = False
     stop_reason: str = ""
@@ -256,136 +248,7 @@ def _ready_phases(
 
 
 # ---------------------------------------------------------------------------
-# Backend: Aider subprocess
-# ---------------------------------------------------------------------------
-
-
-def _check_aider_available() -> bool:
-    """Return ``True`` if ``aider`` is on PATH."""
-    return shutil.which("aider") is not None
-
-
-def _execute_phase_with_aider(
-    pid: str,
-    phase: dict,
-    workspace: str,
-    execfs: ExecFS,
-    api_key: str | None,
-    verify_cmd: str | None,
-    *,
-    retries: int = AIDER_DEFAULT_RETRIES,
-    model: str | None = None,
-    architect: bool = False,
-    timeout: float = AIDER_DEFAULT_TIMEOUT,
-) -> PhaseResult:
-    """Execute a phase by shelling out to ``aider``.
-
-    Builds an Aider CLI invocation, runs it in the workspace, then checks
-    the verify command.  Retries up to *retries* times on verification
-    failure, passing the previous failure output back as context.
-
-    Returns a :class:`PhaseResult` regardless of outcome.
-    """
-    task: str = phase["task"]
-
-    # --- Build aider CLI ---------------------------------------------------
-    args: list[str] = [
-        "aider",
-        "--yes",           # auto-confirm file creation / edits
-        "--exit",          # exit after processing --message (non-interactive)
-        "--no-git",        # don't touch git — Tack owns versioning
-        "--no-auto-commits",
-        "--message",
-        task,
-    ]
-    if model:
-        args.extend(["--model", model])
-    if architect:
-        args.append("--architect")
-    if api_key:
-        args.extend(["--openai-api-key", api_key])
-
-    escaped = " ".join(shlex.quote(a) for a in args)
-
-    # --- Execute with retry loop ------------------------------------------
-    last_error = ""
-    for attempt in range(1, retries + 1):
-        # On retry, augment the message with the previous failure context
-        cmd = escaped
-        if attempt > 1 and last_error:
-            retry_args = list(args)
-            # Replace the --message value
-            msg_idx = retry_args.index("--message") + 1
-            retry_args[msg_idx] = (
-                f"The previous attempt failed verification. Fix the issue.\n\n"
-                f"Original task: {task}\n\n"
-                f"Verification output from last attempt:\n{last_error}"
-            )
-            cmd = " ".join(shlex.quote(a) for a in retry_args)
-
-        # Run aider (respects cwd via execfs.run, which uses workspace as cwd)
-        try:
-            result = execfs.run(cmd, timeout=timeout)
-        except Exception as exc:
-            last_error = f"aider subprocess error: {exc}"
-            continue
-
-        stdout = (result.stdout or "").strip()
-        stderr = (result.stderr or "").strip()
-        aider_ok = result.exit_code == 0
-
-        # --- Run verification ----------------------------------------------
-        if verify_cmd:
-            vresult = execfs.run(verify_cmd)
-            if vresult.exit_code == 0:
-                return PhaseResult(
-                    phase_id=pid,
-                    title=phase["title"],
-                    task=task,
-                    backend="aider",
-                    status="completed",
-                    turns=attempt,
-                    success=True,
-                    verify_command=verify_cmd,
-                    summary=f"Verified on aider attempt {attempt}/{retries}",
-                )
-            last_error = (
-                vresult.stderr or vresult.stdout or "(verify produced no output)"
-            ).strip()[:2000]
-        else:
-            # No verify command — trust aider's exit code
-            if aider_ok:
-                return PhaseResult(
-                    phase_id=pid,
-                    title=phase["title"],
-                    task=task,
-                    backend="aider",
-                    status="completed",
-                    turns=attempt,
-                    success=True,
-                    summary="Aider completed (no verify command)",
-                )
-            last_error = (
-                stderr or stdout or f"aider exited {result.exit_code}"
-            )[:2000]
-
-    # --- All retries exhausted --------------------------------------------
-    return PhaseResult(
-        phase_id=pid,
-        title=phase["title"],
-        task=task,
-        backend="aider",
-        status="failed",
-        turns=retries,
-        success=False,
-        verify_command=verify_cmd,
-        error=f"Failed after {retries} attempts. Last error: {last_error[:500]}",
-        summary=last_error,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Backend: Tack's own run_task() loop
+# Phase execution — Tack's own run_task() loop
 # ---------------------------------------------------------------------------
 
 
@@ -397,12 +260,7 @@ def _execute_phase_with_tack(
     config: Config,
     frontier: LLMTransport | None = None,
 ) -> PhaseResult:
-    """Execute a phase through :func:`tack.core.loop.run_task`.
-
-    This is the original Tack backend for the director — used when ``aider``
-    is unavailable, or when ``backend="tack"`` is explicitly selected (e.g. in
-    tests with a scripted brain).
-    """
+    """Execute a phase through :func:`tack.core.loop.run_task`."""
     task: str = phase["task"]
 
     phase_config = Config(
@@ -428,7 +286,6 @@ def _execute_phase_with_tack(
             phase_id=pid,
             title=phase["title"],
             task=task,
-            backend="tack",
             status="completed" if tr.success else "failed",
             turns=tr.turns,
             success=tr.success,
@@ -444,7 +301,6 @@ def _execute_phase_with_tack(
             phase_id=pid,
             title=phase["title"],
             task=task,
-            backend="tack",
             status="error",
             error=str(exc),
         )
@@ -463,9 +319,6 @@ def build_from_specs(
     config: Config | None = None,
     resume: bool = False,
     frontier: LLMTransport | None = None,
-    backend: str | None = None,
-    aider_model: str | None = None,
-    aider_architect: bool = False,
 ) -> list[PhaseResult]:
     """Orchestrate a full build from specification documents.
 
@@ -473,7 +326,7 @@ def build_from_specs(
 
         1. Read ``.md`` files from *spec_dir*
         2. Ask the LLM to decompose them into a phased plan
-        3. Execute each phase — via Aider (default) or Tack's loop
+        3. Execute each phase through Tack's own :func:`~tack.core.loop.run_task`
         4. Checkpoint after each phase (survives crash / Ctrl-C)
         5. Report per-phase and overall results
 
@@ -486,26 +339,12 @@ def build_from_specs(
     workspace:
         The build output directory (default: ``.``).
     config:
-        Tack loop config (for the ``"tack"`` backend; ``max_iterations`` maps
-        to Aider retry budget for the ``"aider"`` backend).
+        Tack loop config applied to every phase.
     resume:
         If True, load checkpoint from ``.tack/director-state.json``
         and continue where the last run stopped.
     frontier:
-        Optional stronger LLM for the Tack loop's frontier-escalation
-        path (only used by ``backend="tack"``).
-    backend:
-        Which coding engine to use per phase:
-
-        * ``"auto"`` (default) — use Aider if installed, fall back to Tack.
-        * ``"aider"`` — use Aider subprocess (raises if not installed).
-        * ``"tack"`` — use Tack's own :func:`~tack.core.loop.run_task`.
-
-    aider_model:
-        Model name to pass to Aider (e.g. ``"gpt-4o"``).  Default uses
-        Aider's own model resolution.
-    aider_architect:
-        If True, enable Aider's ``--architect`` mode (plan-then-code).
+        Optional stronger LLM for the Tack loop's frontier-escalation path.
 
     Returns
     -------
@@ -515,21 +354,7 @@ def build_from_specs(
     config = config or Config()
     llm = adapters.llm
     control = adapters.control
-    execfs = adapters.execfs
     spec_dir = os.path.abspath(spec_dir)
-
-    # --- Resolve backend --------------------------------------------------
-    resolved_backend = _resolve_backend(backend)
-    print(f"[director] backend: {resolved_backend}")
-    if resolved_backend == "aider":
-        retries = (
-            config.max_iterations if config.max_iterations < 100 else AIDER_DEFAULT_RETRIES
-        )
-        print(
-            f"[director]   aider args: {'architect' if aider_architect else 'direct'}"
-            f"{', model=' + aider_model if aider_model else ''}"
-            f", retries={retries}"
-        )
 
     # ------------------------------------------------------------------
     # Load or build the build plan
@@ -590,13 +415,6 @@ def build_from_specs(
             f"{len(failed_ids)} failed — {'resuming' if resume else 'starting fresh'}"
         )
 
-    # --- Compute Aider retry budget from config ---------------------------
-    aider_retries = (
-        config.max_iterations
-        if config.max_iterations and config.max_iterations < 100
-        else AIDER_DEFAULT_RETRIES
-    )
-
     # ------------------------------------------------------------------
     # Phase execution loop
     # ------------------------------------------------------------------
@@ -623,28 +441,15 @@ def build_from_specs(
         print(f"[director] phase {pid}: {phase['title']}")
         print(f"{'=' * 60}")
 
-        # ---- Dispatch to the chosen backend -----------------------------
-        if resolved_backend == "aider":
-            outcome = _execute_phase_with_aider(
-                pid=pid,
-                phase=phase,
-                workspace=workspace,
-                execfs=execfs,
-                api_key=getattr(llm, "api_key", None),
-                verify_cmd=phase.get("verify") or config.verify_command,
-                retries=aider_retries,
-                model=aider_model,
-                architect=aider_architect,
-            )
-        else:
-            outcome = _execute_phase_with_tack(
-                pid=pid,
-                phase=phase,
-                workspace=workspace,
-                adapters=adapters,
-                config=config,
-                frontier=frontier,
-            )
+        # ---- Execute the phase ------------------------------------------
+        outcome = _execute_phase_with_tack(
+            pid=pid,
+            phase=phase,
+            workspace=workspace,
+            adapters=adapters,
+            config=config,
+            frontier=frontier,
+        )
 
         # ---- Record outcome --------------------------------------------
         is_ok = outcome.status == "completed"
@@ -696,41 +501,10 @@ def build_from_specs(
             if r.status in ("failed", "error")
             else "—"
         )
-        label = " (aider)" if r.backend == "aider" else ""
-        print(f"  {icon} {r.phase_id} {r.title}: {r.status}{label} ({r.turns}t)")
+        print(f"  {icon} {r.phase_id} {r.title}: {r.status} ({r.turns}t)")
         if r.error:
             print(f"       error: {r.error[:120]}")
         if r.promoted_tools:
             print(f"       tools: {', '.join(r.promoted_tools)}")
 
     return results
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _resolve_backend(backend: str | None) -> str:
-    """Resolve the ``backend`` parameter to ``"aider"`` or ``"tack"``.
-
-    * ``"aider"`` — use Aider (raises if not installed).
-    * ``"tack"`` — use Tack's own loop.
-    * ``None`` / ``"auto"`` — auto-detect: Aider if on PATH, else Tack.
-    """
-    if backend in (None, "auto"):
-        if _check_aider_available():
-            return "aider"
-        print("[director] Aider not found on PATH — falling back to Tack loop backend")
-        return "tack"
-    if backend == "aider":
-        if not _check_aider_available():
-            raise RuntimeError(
-                "backend='aider' but `aider` is not on PATH. "
-                "Install it with `pip install aider-chat`."
-            )
-        return "aider"
-    if backend == "tack":
-        return "tack"
-
-    raise ValueError(f"unknown backend: {backend!r} (expected 'aider', 'tack', or 'auto')")

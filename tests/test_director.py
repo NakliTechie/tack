@@ -16,9 +16,7 @@ from tack.adapters.native import NativeControl, NativeExecFS
 from tack.core.loop import Config
 from tack.director import (
     DirectorState,
-    _check_aider_available,
     _ready_phases,
-    _resolve_backend,
     build_from_specs,
     build_plan_from_specs,
     load_specs,
@@ -267,48 +265,6 @@ def test_state_load_corrupt(tmp_path: pathlib.Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Backend resolution
-# ---------------------------------------------------------------------------
-
-
-def test_check_aider_available(monkeypatch) -> None:
-    """PATH lookup, both ways — must not depend on what the dev box has installed."""
-    monkeypatch.setattr("tack.director.shutil.which", lambda name: "/usr/local/bin/aider")
-    assert _check_aider_available() is True
-
-    monkeypatch.setattr("tack.director.shutil.which", lambda name: None)
-    assert _check_aider_available() is False
-
-
-def test_resolve_backend_auto_prefers_aider(monkeypatch) -> None:
-    monkeypatch.setattr("tack.director._check_aider_available", lambda: True)
-    assert _resolve_backend(None) == "aider"
-    assert _resolve_backend("auto") == "aider"
-
-
-def test_resolve_backend_auto_falls_back_to_tack(monkeypatch) -> None:
-    """The branch that keeps the suite portable when aider isn't installed."""
-    monkeypatch.setattr("tack.director._check_aider_available", lambda: False)
-    assert _resolve_backend(None) == "tack"
-    assert _resolve_backend("auto") == "tack"
-
-
-def test_resolve_backend_tack() -> None:
-    assert _resolve_backend("tack") == "tack"
-
-
-def test_resolve_backend_aider_raises_if_missing(monkeypatch) -> None:
-    monkeypatch.setattr("tack.director._check_aider_available", lambda: False)
-    with pytest.raises(RuntimeError, match="aider.*not on"):
-        _resolve_backend("aider")
-
-
-def test_resolve_backend_unknown() -> None:
-    with pytest.raises(ValueError, match="unknown backend"):
-        _resolve_backend("gpt")
-
-
-# ---------------------------------------------------------------------------
 # Full director loop (scripted brain)
 # ---------------------------------------------------------------------------
 
@@ -355,7 +311,6 @@ def test_build_from_specs_two_phases(tmp_path: pathlib.Path) -> None:
         adapters,
         workspace=str(ws),
         config=Config(max_iterations=8),
-        backend="tack",  # scripted brain needs Tack loop
     )
 
     assert len(results) == 2
@@ -426,7 +381,6 @@ def test_build_from_specs_resume_after_interrupt(tmp_path: pathlib.Path) -> None
         workspace=str(ws),
         config=Config(max_iterations=8),
         resume=True,
-        backend="tack",  # scripted brain needs Tack loop
     )
 
     assert len(results) == 2
@@ -480,7 +434,6 @@ def test_phase_failure_blocks_dependents(tmp_path: pathlib.Path) -> None:
         adapters,
         workspace=str(ws),
         config=Config(max_iterations=4),
-        backend="tack",  # scripted brain needs Tack loop
     )
 
     assert len(results) >= 1
@@ -499,4 +452,4 @@ def test_build_from_specs_no_specs_raises(tmp_path: pathlib.Path) -> None:
     adapters = Adapters(llm=brain, control=ScriptedBrain([]), execfs=ScriptedBrain([]))
 
     with pytest.raises(ValueError, match="no .md files"):
-        build_from_specs(str(specs_dir), adapters, backend="tack")
+        build_from_specs(str(specs_dir), adapters)
